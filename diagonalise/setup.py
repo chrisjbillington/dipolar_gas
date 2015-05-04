@@ -1,18 +1,14 @@
 # Run this setup script like so:
 # python setup.py build_ext --inplace
 
+# To produce html annotation for a cython file, instead run:
+# cython -a myfile.pyx
+
 from distutils.core import setup
 from distutils.extension import Extension
 from Cython.Distutils import build_ext
 
-# import Cython.Compiler.Options
-# Cython.Compiler.Options.annotate = True
-
-import numpy
-
-ext_modules = [Extension("diagonalise",
-                         ["diagonalise.pyx"],
-                         include_dirs = [numpy.get_include()])]
+ext_modules = [Extension("diagonalise", ["diagonalise.pyx"])]
 setup(
     name = "diagonalise",
     cmdclass = {"build_ext": build_ext},

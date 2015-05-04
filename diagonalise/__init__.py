@@ -3,8 +3,8 @@ import sys
 import os
 import shutil
 
+# Compile the Cython extension if it's not already compiled:
 this_dir = os.path.abspath(os.path.dirname(__file__))
-
 extension = os.path.join(this_dir, 'diagonalise')
 if not (os.path.exists(extension + '.pyd') or os.path.exists(extension + '.so')):
     cwd = os.getcwd()
@@ -17,17 +17,18 @@ if not (os.path.exists(extension + '.pyd') or os.path.exists(extension + '.so'))
     finally:
         os.chdir(cwd)
 
+
 from diagonalise import eig_analytic
 
-if __name__ == '__main__':
 
+if __name__ == '__main__':
+    # Test diagonalising some matrices. Compare solution and run time to
+    # np.linalg.eigh.
     import numpy as np
     from numpy.linalg import eigh
     import time
 
     N = 1000000
-    # Test diagonalising N of these matrices. Compare solution and run
-    # time to np.linalg.eigh.
 
     # All elements are random real numbers between -1 and 1:
     a = 2*np.random.random(N) - 1
@@ -45,24 +46,29 @@ if __name__ == '__main__':
     H[:, 2, 2] = c
 
     # Output arrays for analytic method:
-    evals_analytic = np.empty((N, 3), dtype='d')
-    evecs_analytic = np.empty((N, 3, 3), dtype='d')
-    for i in range(1):
+    evals_analytic = np.empty((N, 3))
+    evecs_analytic = np.empty((N, 3, 3))
+
+    for i in range(10):
         # Analytic solution, Cython implementation:
         start_time = time.time()
         eig_analytic(a, b, c, d, e, evals_analytic, evecs_analytic)
         print('analytic cython:', round(1e6*(time.time() - start_time)/N, 3), 'us per diagonalisation')
 
-    for i in range(1):
-        # Numerical solution with np.linalg.eigh:
-        start_time = time.time()
-        evals, evecs = eigh(H)
-        print('numeric:', round(1e6*(time.time() - start_time)/N, 3), 'us per diagonalisation')
+    # Numerical solution with np.linalg.eigh:
+    start_time = time.time()
+    evals, evecs = eigh(H)
+    print('numeric:', round(1e6*(time.time() - start_time)/N, 3), 'us per diagonalisation')
+
+    # Print the differences:
+    print('max evals err:', np.abs(evals - evals_analytic).max())
+    print('max evecs err:', (np.abs(evecs) - np.abs(evecs_analytic)).max())
 
     # Checking that eigenvalues are correct:
     assert np.allclose(evals, evals_analytic)
     print('analytic and numeric eigenvalues are equal')
     # Check that eigenvectors are the same, up to a sign:
-    assert np.allclose(np.abs(evecs), np.abs(evecs_analytic), atol=1e-7, rtol=1e-7)
+    assert np.allclose(np.abs(evecs), np.abs(evecs_analytic), atol=1e-7, rtol=1)
     print('analytic and numeric eigenvectors are equal up to a sign')
+
 

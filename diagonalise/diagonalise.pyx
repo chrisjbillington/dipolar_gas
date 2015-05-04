@@ -86,6 +86,7 @@ def eig_analytic(double[:] a_arr,
         v32 /= norm_v3
         v33 = 1/norm_v3
 
+        # Write to the output arrays:
         evals_out[i, 0] = l1
         evals_out[i, 1] = l2
         evals_out[i, 2] = l3
