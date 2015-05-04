@@ -4,31 +4,37 @@ import numpy as np
 pi = np.pi
 
 class DipoleGasProblem(object):
-    def __init__(self, N_kx=100, N_ky=300, kx_max=pi, ky_max=3*pi):
+    def __init__(self, N_kx=1000, N_ky=2000, reduced_kx_max=0.5, reduced_ky_max=1):
 
         # number of k points in x and y directions:
         self.N_kx = N_kx
         self.N_ky = N_ky
 
         # range of k in x and y directions:
-        self.kx_max = kx_max
-        self.ky_max = ky_max
+        self.reduced_kx_max = reduced_kx_max
+        self.reduced_ky_max = reduced_ky_max
+
+        # We create arrays of 'reduced' wavenumbers, that is, wavenumbers as a fraction of q_c.
+        # We'll multiply them by q_c each time we need actual wavenumbers:
 
         # x component of k, shape (N_kx, 1):
-        self.kx = np.linspace(-kx_max, kx_max, N_kx, endpoint=False).reshape((N_kx, 1))
+        self.reduced_kx = np.linspace(-reduced_kx_max, reduced_kx_max, N_kx, endpoint=False).reshape((N_kx, 1))
 
         # y component of k, shape (1, N_ky):
-        self.ky = np.linspace(-ky_max, ky_max, N_ky, endpoint=False).reshape((1, N_ky))
+        self.reduced_ky = np.linspace(-reduced_ky_max, reduced_ky_max, N_ky, endpoint=False).reshape((1, N_ky))
 
         # k vectors, shape (N_kx, N_ky, 2):
-        self.k = np.zeros((N_kx, N_ky, 2))
-        self.k[:, :, 0] = self.kx
-        self.k[:, :, 1] = self.ky
+        self.reduced_k = np.zeros((N_kx, N_ky, 2))
+        self.reduced_k[:, :, 0] = self.reduced_kx
+        self.reduced_k[:, :, 1] = self.reduced_ky
 
-        dkx = self.kx[1, 0] - self.kx[0, 0]
-        dky = self.ky[0, 1] - self.ky[0, 0]
+        initial_q, _ = self.get_q_and_mu_guess()
+        dkx = (self.reduced_kx[1, 0] - self.reduced_kx[0, 0]) * initial_q
+        dky = (self.reduced_ky[0, 1] - self.reduced_ky[0, 0]) * initial_q
 
-        self.N_particles = 1/(2*pi) * N_kx * N_ky #* dkx * dky
+        self.N_particles = 2*pi / (dkx * dky)
+
+        print(self.N_particles)
 
     def get_h_guess(self):
         # h_k has shape (N_kx, N_ky, 2), where the last dimension is for
@@ -39,9 +45,11 @@ class DipoleGasProblem(object):
         # epsilon has shape (N_kx, N_ky, 3), where the last dimension is for
         # the three bands with wavenumbers k-q, k, k+q:
         epsilon_guess = np.zeros((self.N_kx, self.N_ky, 3))
-        epsilon_guess[:, :, 0] = 1/2 * ((self.kx - q)**2 + self.ky**2)
-        epsilon_guess[:, :, 1] = 1/2 * (self.kx**2 + self.ky**2)
-        epsilon_guess[:, :, 2] = 1/2 * ((self.kx + q)**2 + self.ky**2)
+        kx = q * self.reduced_kx
+        ky = q * self.reduced_ky
+        epsilon_guess[:, :, 0] = 1/2 * ((kx - q)**2 + ky**2)
+        epsilon_guess[:, :, 1] = 1/2 * (kx**2 + ky**2)
+        epsilon_guess[:, :, 2] = 1/2 * ((kx + q)**2 + ky**2)
         return epsilon_guess
 
     def get_q_and_mu_guess(self):
@@ -70,8 +78,6 @@ class DipoleGasProblem(object):
     def compute_q_and_mu(self, E_k_n):
         sorted_energy_eigenvalues = np.sort(E_k_n.flatten())
         mu = sorted_energy_eigenvalues[int(round(self.N_particles))]
-        import IPython
-        IPython.embed()
         print(mu)
         assert False
 
