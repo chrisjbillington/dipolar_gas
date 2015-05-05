@@ -1,10 +1,51 @@
-from __future__ import division
+from __future__ import division, print_function
 import numpy as np
 
 pi = np.pi
 
+
+def f(mu, E):
+    """Fermi Dirac distribution at zero temperature"""
+    occupation = np.empty(E.shape)
+    occupation[E <= mu] = 1
+    occupation[E > mu] = 0
+    return occupation
+
+V_input_arrays_x = []
+V_input_arrays_y = []
+
+evaluations = 0
+dups = 0
+
+def V(px, py, g, theta_dipole):
+    global evaluations, dups
+    if isinstance(px, np.ndarray) and isinstance(py, np.ndarray):
+        points = np.prod(py.shape) * np.prod(px.shape)
+        evaluations += points
+        x_is_dup = False
+        y_is_dup = False
+        for previously_used in V_input_arrays_x:
+            if np.allclose(px, previously_used, atol=1e-2, rtol=1e-2):
+                x_is_dup = True
+        for previously_used in V_input_arrays_y:
+            if np.allclose(py, previously_used, atol=1e-2, rtol=1e-2):
+                y_is_dup = True
+
+        if x_is_dup and y_is_dup:
+            dups += points
+        print('dups:', 100*dups/evaluations, 'percent')
+        if not x_is_dup:
+            V_input_arrays_y.append(px)
+        if not y_is_dup:
+            V_input_arrays_x.append(py)
+    import time
+    start_time = time.time()
+    result = g * np.sqrt(px**2 + py**2) * (np.cos(theta_dipole)**2 - np.sin(theta_dipole)**2)
+    print('V', time.time() - start_time)
+    return result
+
 class DipoleGasProblem(object):
-    def __init__(self, N_kx=1000, N_ky=2000, reduced_kx_max=0.5, reduced_ky_max=1):
+    def __init__(self, N_kx=50, N_ky=50, reduced_kx_max=0.5, reduced_ky_max=1):
 
         # number of k points in x and y directions:
         self.N_kx = N_kx
@@ -78,15 +119,56 @@ class DipoleGasProblem(object):
     def compute_q_and_mu(self, E_k_n):
         sorted_energy_eigenvalues = np.sort(E_k_n.flatten())
         mu = sorted_energy_eigenvalues[int(round(self.N_particles))]
-        print(mu)
-        assert False
+        k_F = 'dunno' #TODO: figure it out.
+        q = 2*k_F
+        return q, mu
 
-    def compute_epsilon(self, E_k_n, U_k, mu, q):
-        raise NotImplementedError()
+    def epsilon_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+        kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
+        kyprime = q * self.reduced_ky.reshape(1, self.N_ky, 1, 1)
+        terms_over_kprime = np.zeros((self.N_kx, self.N_ky, self.N_kx, self.N_ky))
+        for n in (-1, 0, 1): # Which band:
+            potential_terms = V(0, 0, g, theta_dipole) - V(px - kxprime - n*q, py - kyprime, g, theta_dipole)
+            for l in (0, 1, 2): # Which eigenvector/eigenvalue:
+                terms_over_kprime += potential_terms * np.abs(U_k[:, :, n+1, l])**2 * f(mu, E_k_n[:, :, l])
+        epsilon_p = (px**2 + py**2)/ 2 + terms_over_kprime.sum(axis=(0,1))
+        return epsilon_p
 
-    def compute_h_k(self, E_k_n, U_k, mu, q):
-        raise NotImplementedError()
+    def compute_epsilon(self, E_k_n, U_k, mu, q, g, theta_dipole):
+        # epsilon has shape (N_kx, N_ky, 3), where the last dimension is for
+        # the three bands with wavenumbers k-q, k, k+q:
+        epsilon = np.zeros((self.N_kx, self.N_ky, 3))
+        kx = q * self.reduced_kx
+        ky = q * self.reduced_ky
+        import time
+        start_time = time.time()
+        epsilon[:, :, 0] = self.epsilon_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        epsilon[:, :, 2] = self.epsilon_of_p(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        print('epsilon:', time.time() - start_time)
+        return epsilon
 
+    def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+        kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
+        kyprime = q * self.reduced_ky.reshape(1, self.N_ky, 1, 1)
+        terms_over_kprime = np.zeros((self.N_kx, self.N_ky, self.N_kx, self.N_ky))
+        for l in (0, 1, 2): # Which eigenvector/eigenvalue:
+            terms_over_kprime += ((V(q, 0, g, theta_dipole) -
+                                  V(px - kxprime + q, py - kyprime, g, theta_dipole)) *
+                                  U_k[:, :, 1, l] * U_k[:, :, 2, l] * f(mu, E_k_n[:, :, l]))
+            terms_over_kprime += ((V(q, 0, g, theta_dipole) -
+                                  V(px - kxprime, py - kyprime, g, theta_dipole))
+                                  * U_k[:, :, 2, l] * U_k[:, :, 3, l] * f(mu, E_k_n[:, :, l]))
+        h_p = terms_over_kprime.sum(axis=(0,1))
+        return h_p
+
+    def compute_h(self, E_k_n, U_k, mu, q, g, theta_dipole):
+        h = np.zeros((self.N_kx, self.N_ky, 2))
+        kx = q * self.reduced_kx
+        ky = q * self.reduced_ky
+        h[:, :, 0] = self.h_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        h[:, :, 1] = self.h_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        return h
 
     def find_eigenvalues(self, g, theta_dipole,
                          h_guess=None, epsilon_guess=None, q_guess=None, mu_guess=None,
@@ -118,8 +200,8 @@ class DipoleGasProblem(object):
 
             # Compute new guesses of q, h and epsilon:
             new_q, new_mu = self.compute_q_and_mu(E_k_n)
-            new_epsilon = self.compute_epsilon(E_k_n, U_k, mu, q)
-            new_h = self.compute_h(E_k_n, U_k, mu, q)
+            new_epsilon = self.compute_epsilon(E_k_n, U_k, mu, q, g, theta_dipole)
+            new_h = self.compute_h(E_k_n, U_k, mu, q, g, theta_dipole)
 
             # For the moment just use relaxation parameter of 1:
             # TODO: do over relaxation to make much fast for glorious nation
