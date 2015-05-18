@@ -16,9 +16,9 @@ pi = np.pi
 
 def f(mu, E):
     """Fermi Dirac distribution at zero temperature"""
-    occupation = np.empty(E.shape)
+    occupation = np.zeros(E.shape)
     occupation[E <= mu] = 1
-    occupation[E > mu] = 0
+    # occupation[E > mu] = 0
     return occupation
 
 def V(px, py, g, theta_dipole):
@@ -26,7 +26,7 @@ def V(px, py, g, theta_dipole):
     return result
 
 class DipoleGasProblem(object):
-    def __init__(self, N_kx=50, N_ky=50, reduced_kx_max=0.5, reduced_ky_max=1):
+    def __init__(self, N_kx=100, N_ky=100, reduced_kx_max=0.5, reduced_ky_max=1):
 
         # number of k points in x and y directions:
         self.N_kx = N_kx
@@ -132,18 +132,30 @@ class DipoleGasProblem(object):
         q = 2*k_F
         return q, mu
 
-    def epsilon_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+    def epsilon_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole, debug=False):
         kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
         kyprime = q * self.reduced_ky.reshape(1, self.N_ky, 1, 1)
         terms_over_kprime = np.zeros((self.N_kx, self.N_ky, self.N_kx, self.N_ky))
         for n in (-1, 0, 1): # Which band:
             potential_terms = V(0, 0, g, theta_dipole) - V(px - kxprime - n*q, py - kyprime, g, theta_dipole)
             for l in (0, 1, 2): # Which eigenvector/eigenvalue:
-                terms_over_kprime += potential_terms * np.abs(U_k[:, :, n+1, l])**2 * f(mu, E_k_n[:, :, l])
+                eigenvector_element = U_k[:, :, n+1, l, np.newaxis, np.newaxis]
+                eigenvalue = E_k_n[:, :, l, np.newaxis, np.newaxis]
+                terms_over_kprime += potential_terms * np.abs(eigenvector_element)**2 * f(mu, eigenvalue)
+                if debug and n==0 and l==0:
+                    print('epsilon_k[7,5] kprime[22,33] n=0, l=0 (Python):')
+                    print('  px is:', px[7, 0])
+                    print('  py is:', py[0, 5])
+                    print('  kxprime is:', kxprime[22,0,0,0])
+                    print('  kyprime is:', kyprime[0,33,0,0])
+                    print('  potential terms is', potential_terms[22, 33, 7, 5])
+                    print('  value of term is:', terms_over_kprime[22, 33, 7, 5])
         epsilon_p = (px**2 + py**2)/ 2 + terms_over_kprime.sum(axis=(0,1))
+        if debug:
+            print('epsilon_k[7,5] (Python):', epsilon_p[7, 5])
         return epsilon_p
 
-    def epsilon_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+    def epsilon_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole, debug=0):
         kxprime = q * self.reduced_kx
         kyprime = q * self.reduced_ky
         epsilon_p = np.zeros((self.N_kx, self.N_ky))
@@ -156,7 +168,7 @@ class DipoleGasProblem(object):
                          drv.In(kxprime), drv.In(kyprime),
                          drv.In(E_k_n), drv.In(U_k),
                          np.double(mu), np.double(q), np.double(g), np.double(theta_dipole),
-                         np.int32(self.N_kx), np.int32(self.N_ky),
+                         np.int32(self.N_kx), np.int32(self.N_ky), np.int32(debug),
                          block=block, grid=grid)
         return epsilon_p
 
@@ -166,54 +178,58 @@ class DipoleGasProblem(object):
         epsilon = np.zeros((self.N_kx, self.N_ky, 3))
         kx = q * self.reduced_kx
         ky = q * self.reduced_ky
+        import time
+        start_time = time.time()
         epsilon[:, :, 0] = self.epsilon_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=0)
         epsilon[:, :, 2] = self.epsilon_of_p(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        print(time.time() - start_time)
+        # epsilon2 = np.zeros((self.N_kx, self.N_ky, 3))
+        # epsilon2[:, :, 0] = self.epsilon_of_p_slow(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        # epsilon2[:, :, 1] = self.epsilon_of_p_slow(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=True)
+        # epsilon2[:, :, 2] = self.epsilon_of_p_slow(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
 
-        epsilon2 = np.zeros((self.N_kx, self.N_ky, 3))
-        epsilon2[:, :, 0] = self.epsilon_of_p_slow(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        epsilon2[:, :, 1] = self.epsilon_of_p_slow(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        epsilon2[:, :, 2] = self.epsilon_of_p_slow(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        return epsilon
 
-        return epsilon2
-
-    def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+    def h_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
         kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
         kyprime = q * self.reduced_ky.reshape(1, self.N_ky, 1, 1)
         terms_over_kprime = np.zeros((self.N_kx, self.N_ky, self.N_kx, self.N_ky))
         for l in (0, 1, 2): # Which eigenvector/eigenvalue:
+            eigenvector_elements =  U_k[:, :, :, l, np.newaxis, np.newaxis]
+            eigenvalue = E_k_n[:, :, l, np.newaxis, np.newaxis]
             terms_over_kprime += ((V(q, 0, g, theta_dipole) -
                                   V(px - kxprime + q, py - kyprime, g, theta_dipole)) *
-                                  U_k[:, :, 0, l] * U_k[:, :, 1, l] * f(mu, E_k_n[:, :, l]))
+                                  eigenvector_elements[:, :, 0] * eigenvector_elements[:, :, 1] * f(mu, eigenvalue))
             terms_over_kprime += ((V(q, 0, g, theta_dipole) -
                                   V(px - kxprime, py - kyprime, g, theta_dipole))
-                                  * U_k[:, :, 1, l] * U_k[:, :, 2, l] * f(mu, E_k_n[:, :, l]))
+                                  * eigenvector_elements[:, :, 1] * eigenvector_elements[:, :, 2] * f(mu, eigenvalue))
         h_p = terms_over_kprime.sum(axis=(0,1))
         return h_p
 
-    # def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
-    #     kxprime = q * self.reduced_kx
-    #     kyprime = q * self.reduced_ky
-    #     h_p = np.zeros((self.N_kx, self.N_ky))
+    def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole, debug=0):
+        kxprime = q * self.reduced_kx
+        kyprime = q * self.reduced_ky
+        h_p = np.zeros((self.N_kx, self.N_ky))
 
-    #     block=(16,16,1)
-    #     grid=(int(self.N_kx/16 + 1),int(self.N_ky/16 + 1))
+        block=(16,16,1)
+        grid=(int(self.N_kx/16 + 1),int(self.N_ky/16 + 1))
 
-    #     h_of_p_GPU(drv.Out(h_p),
-    #                drv.In(px), drv.In(py),
-    #                drv.In(kxprime), drv.In(kyprime),
-    #                drv.In(E_k_n), drv.In(U_k),
-    #                np.double(mu), np.double(q), np.double(g), np.double(theta_dipole),
-    #                np.int32(self.N_kx), np.int32(self.N_ky),
-    #                block=block, grid=grid)
-    #     return h_p
+        h_of_p_GPU(drv.Out(h_p),
+                   drv.In(px), drv.In(py),
+                   drv.In(kxprime), drv.In(kyprime),
+                   drv.In(E_k_n), drv.In(U_k),
+                   np.double(mu), np.double(q), np.double(g), np.double(theta_dipole),
+                   np.int32(self.N_kx), np.int32(self.N_ky), np.int32(debug),
+                   block=block, grid=grid)
+        return h_p
 
     def compute_h(self, E_k_n, U_k, mu, q, g, theta_dipole):
         h = np.zeros((self.N_kx, self.N_ky, 2))
         kx = q * self.reduced_kx
         ky = q * self.reduced_ky
         h[:, :, 0] = self.h_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        h[:, :, 1] = self.h_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        h[:, :, 1] = self.h_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=0)
         return h
 
     def find_eigenvalues(self, g, theta_dipole,
@@ -229,6 +245,7 @@ class DipoleGasProblem(object):
             h_guess = self.get_h_guess()
         if epsilon_guess is None:
             epsilon_guess = self.get_epsilon_guess(q_guess)
+            print('initial epsilon_k[7,5]]', epsilon_guess[7,5,1])
         h = h_guess
         epsilon = epsilon_guess
         q = q_guess
@@ -246,23 +263,26 @@ class DipoleGasProblem(object):
 
             # Compute new guesses of q, h and epsilon:
             new_q, new_mu = self.compute_q_and_mu(E_k_n, q)
-            new_epsilon = self.compute_epsilon(E_k_n, U_k, mu, q, g, theta_dipole)
-            new_h = self.compute_h(E_k_n, U_k, mu, q, g, theta_dipole)
+            print("mu", new_mu)
+            print("q", new_q)
+            new_epsilon = self.compute_epsilon(E_k_n, U_k, new_mu, new_q, g, theta_dipole)
+            new_h = self.compute_h(E_k_n, U_k, new_mu, new_q, g, theta_dipole)
 
             # For the moment just use relaxation parameter of 1:
             # TODO: do over relaxation to make much fast for glorious nation
             # of Kazakhstan
             relaxation_parameter = 1
+            print('convergence:', abs(mu - new_mu)/mu)
             q += relaxation_parameter*(new_q - q)
             mu += relaxation_parameter*(new_mu - mu)
             h += relaxation_parameter*(new_h - h)
             epsilon += relaxation_parameter*(new_epsilon - epsilon)
 
-            print(mu)
+
 
 if __name__ == '__main__':
     problem = DipoleGasProblem()
-    problem.find_eigenvalues(-20, 0)
+    problem.find_eigenvalues(-20, 0.1*pi)
 
 
 
