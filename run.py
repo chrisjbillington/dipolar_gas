@@ -1,6 +1,16 @@
 from __future__ import division, print_function
 import numpy as np
 
+import pycuda.autoinit
+import pycuda.driver as drv
+from pycuda.compiler import SourceModule
+
+# Load CUDA functions:
+with open('cuda_module.cu') as f:
+    mod = SourceModule(f.read())
+epsilon_of_p_GPU = mod.get_function("epsilon_of_p_GPU")
+h_of_p_GPU = mod.get_function("h_of_p_GPU")
+
 pi = np.pi
 
 
@@ -11,37 +21,8 @@ def f(mu, E):
     occupation[E > mu] = 0
     return occupation
 
-V_input_arrays_x = []
-V_input_arrays_y = []
-
-evaluations = 0
-dups = 0
-
 def V(px, py, g, theta_dipole):
-    global evaluations, dups
-    if isinstance(px, np.ndarray) and isinstance(py, np.ndarray):
-        points = np.prod(py.shape) * np.prod(px.shape)
-        evaluations += points
-        x_is_dup = False
-        y_is_dup = False
-        for previously_used in V_input_arrays_x:
-            if np.allclose(px, previously_used, atol=1e-2, rtol=1e-2):
-                x_is_dup = True
-        for previously_used in V_input_arrays_y:
-            if np.allclose(py, previously_used, atol=1e-2, rtol=1e-2):
-                y_is_dup = True
-
-        if x_is_dup and y_is_dup:
-            dups += points
-        print('dups:', 100*dups/evaluations, 'percent')
-        if not x_is_dup:
-            V_input_arrays_y.append(px)
-        if not y_is_dup:
-            V_input_arrays_x.append(py)
-    import time
-    start_time = time.time()
     result = g * np.sqrt(px**2 + py**2) * (np.cos(theta_dipole)**2 - np.sin(theta_dipole)**2)
-    print('V', time.time() - start_time)
     return result
 
 class DipoleGasProblem(object):
@@ -80,7 +61,8 @@ class DipoleGasProblem(object):
     def get_h_guess(self):
         # h_k has shape (N_kx, N_ky, 2), where the last dimension is for
         # wavenumbers k-q and k, in that order.
-        return np.zeros((self.N_kx, self.N_ky, 2))
+        # return np.zeros((self.N_kx, self.N_ky, 2))
+        return np.random.randn(self.N_kx, self.N_ky, 2)
 
     def get_epsilon_guess(self, q):
         # epsilon has shape (N_kx, N_ky, 3), where the last dimension is for
@@ -116,14 +98,41 @@ class DipoleGasProblem(object):
         H_k[:, :, 2, 2] = epsilon_k_plus_q
         return H_k
 
-    def compute_q_and_mu(self, E_k_n):
+    def compute_q_and_mu(self, E_k_n, old_q):
         sorted_energy_eigenvalues = np.sort(E_k_n.flatten())
         mu = sorted_energy_eigenvalues[int(round(self.N_particles))]
-        k_F = 'dunno' #TODO: figure it out.
+
+        def plot_fermi_surface():
+            import pylab as pl
+            threshold = 0.1
+            image = np.zeros((self.N_kx, self.N_ky, 3))
+            image[np.abs(mu - E_k_n) < threshold] = 1
+            image = image.sum(axis=-1)
+            image[image > 0] = 1
+            pl.imshow(image.transpose(), extent=[-0.5*old_q, 0.5*old_q, -old_q, old_q], origin='lower')
+            pl.show()
+
+        # plot_fermi_surface()
+
+        y_origin_index = np.where(self.reduced_kx==0)[0][0]
+        energies_along_x_axis = np.sort(E_k_n[self.N_kx/2:, y_origin_index])[:, 1]
+        next_band_energies = np.sort(E_k_n[self.N_kx/2:, y_origin_index])[:, 0]
+        kx_on_positive_axis = old_q*self.reduced_kx[self.N_kx/2:, 0]
+        next_band_kx = old_q*(1-self.reduced_kx[self.N_kx/2:, 0])
+
+        kx_both_bands = np.concatenate((kx_on_positive_axis, next_band_kx))
+        energies_both_bands = np.concatenate((energies_along_x_axis, next_band_energies))
+        from scipy.interpolate import interp1d
+        from scipy.optimize import fsolve
+        interpolator = interp1d(kx_both_bands, energies_both_bands, kind='cubic')
+
+        kx_at_fermi_surface = fsolve(lambda x: interpolator(x) - mu, old_q/2)[0]
+
+        k_F = kx_at_fermi_surface
         q = 2*k_F
         return q, mu
 
-    def epsilon_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+    def epsilon_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
         kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
         kyprime = q * self.reduced_ky.reshape(1, self.N_ky, 1, 1)
         terms_over_kprime = np.zeros((self.N_kx, self.N_ky, self.N_kx, self.N_ky))
@@ -134,19 +143,39 @@ class DipoleGasProblem(object):
         epsilon_p = (px**2 + py**2)/ 2 + terms_over_kprime.sum(axis=(0,1))
         return epsilon_p
 
+    def epsilon_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+        kxprime = q * self.reduced_kx
+        kyprime = q * self.reduced_ky
+        epsilon_p = np.zeros((self.N_kx, self.N_ky))
+
+        block=(16,16,1)
+        grid=(int(self.N_kx/16 + 1),int(self.N_ky/16 + 1))
+
+        epsilon_of_p_GPU(drv.Out(epsilon_p),
+                         drv.In(px), drv.In(py),
+                         drv.In(kxprime), drv.In(kyprime),
+                         drv.In(E_k_n), drv.In(U_k),
+                         np.double(mu), np.double(q), np.double(g), np.double(theta_dipole),
+                         np.int32(self.N_kx), np.int32(self.N_ky),
+                         block=block, grid=grid)
+        return epsilon_p
+
     def compute_epsilon(self, E_k_n, U_k, mu, q, g, theta_dipole):
         # epsilon has shape (N_kx, N_ky, 3), where the last dimension is for
         # the three bands with wavenumbers k-q, k, k+q:
         epsilon = np.zeros((self.N_kx, self.N_ky, 3))
         kx = q * self.reduced_kx
         ky = q * self.reduced_ky
-        import time
-        start_time = time.time()
         epsilon[:, :, 0] = self.epsilon_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
         epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
         epsilon[:, :, 2] = self.epsilon_of_p(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        print('epsilon:', time.time() - start_time)
-        return epsilon
+
+        epsilon2 = np.zeros((self.N_kx, self.N_ky, 3))
+        epsilon2[:, :, 0] = self.epsilon_of_p_slow(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        epsilon2[:, :, 1] = self.epsilon_of_p_slow(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        epsilon2[:, :, 2] = self.epsilon_of_p_slow(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+
+        return epsilon2
 
     def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
         kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
@@ -155,12 +184,29 @@ class DipoleGasProblem(object):
         for l in (0, 1, 2): # Which eigenvector/eigenvalue:
             terms_over_kprime += ((V(q, 0, g, theta_dipole) -
                                   V(px - kxprime + q, py - kyprime, g, theta_dipole)) *
-                                  U_k[:, :, 1, l] * U_k[:, :, 2, l] * f(mu, E_k_n[:, :, l]))
+                                  U_k[:, :, 0, l] * U_k[:, :, 1, l] * f(mu, E_k_n[:, :, l]))
             terms_over_kprime += ((V(q, 0, g, theta_dipole) -
                                   V(px - kxprime, py - kyprime, g, theta_dipole))
-                                  * U_k[:, :, 2, l] * U_k[:, :, 3, l] * f(mu, E_k_n[:, :, l]))
+                                  * U_k[:, :, 1, l] * U_k[:, :, 2, l] * f(mu, E_k_n[:, :, l]))
         h_p = terms_over_kprime.sum(axis=(0,1))
         return h_p
+
+    # def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+    #     kxprime = q * self.reduced_kx
+    #     kyprime = q * self.reduced_ky
+    #     h_p = np.zeros((self.N_kx, self.N_ky))
+
+    #     block=(16,16,1)
+    #     grid=(int(self.N_kx/16 + 1),int(self.N_ky/16 + 1))
+
+    #     h_of_p_GPU(drv.Out(h_p),
+    #                drv.In(px), drv.In(py),
+    #                drv.In(kxprime), drv.In(kyprime),
+    #                drv.In(E_k_n), drv.In(U_k),
+    #                np.double(mu), np.double(q), np.double(g), np.double(theta_dipole),
+    #                np.int32(self.N_kx), np.int32(self.N_ky),
+    #                block=block, grid=grid)
+    #     return h_p
 
     def compute_h(self, E_k_n, U_k, mu, q, g, theta_dipole):
         h = np.zeros((self.N_kx, self.N_ky, 2))
@@ -199,23 +245,24 @@ class DipoleGasProblem(object):
             E_k_n, U_k = eigh(H_k)
 
             # Compute new guesses of q, h and epsilon:
-            new_q, new_mu = self.compute_q_and_mu(E_k_n)
+            new_q, new_mu = self.compute_q_and_mu(E_k_n, q)
             new_epsilon = self.compute_epsilon(E_k_n, U_k, mu, q, g, theta_dipole)
             new_h = self.compute_h(E_k_n, U_k, mu, q, g, theta_dipole)
 
             # For the moment just use relaxation parameter of 1:
             # TODO: do over relaxation to make much fast for glorious nation
             # of Kazakhstan
-            q = new_q
-            mu = new_mu
-            h = new_h
-            epsilon = new_epsilon
+            relaxation_parameter = 1
+            q += relaxation_parameter*(new_q - q)
+            mu += relaxation_parameter*(new_mu - mu)
+            h += relaxation_parameter*(new_h - h)
+            epsilon += relaxation_parameter*(new_epsilon - epsilon)
 
-
+            print(mu)
 
 if __name__ == '__main__':
     problem = DipoleGasProblem()
-    problem.find_eigenvalues(0, 0)
+    problem.find_eigenvalues(-20, 0)
 
 
 
