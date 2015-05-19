@@ -26,7 +26,7 @@ def V(px, py, g, theta_dipole):
     return result
 
 class DipoleGasProblem(object):
-    def __init__(self, N_kx=100, N_ky=100, reduced_kx_max=0.5, reduced_ky_max=1):
+    def __init__(self, N_kx=50, N_ky=50, reduced_kx_max=0.5, reduced_ky_max=1):
 
         # number of k points in x and y directions:
         self.N_kx = N_kx
@@ -149,10 +149,13 @@ class DipoleGasProblem(object):
                     print('  kxprime is:', kxprime[22,0,0,0])
                     print('  kyprime is:', kyprime[0,33,0,0])
                     print('  potential terms is', potential_terms[22, 33, 7, 5])
-                    print('  value of term is:', terms_over_kprime[22, 33, 7, 5])
+                    print('  evec element is', eigenvector_element[22, 33, 0, 0])
+                    this_term = potential_terms * np.abs(eigenvector_element)**2 * f(mu, eigenvalue)
+                    print('  value of term is:', this_term[22, 33, 7, 5])
         epsilon_p = (px**2 + py**2)/ 2 + terms_over_kprime.sum(axis=(0,1))
         if debug:
             print('epsilon_k[7,5] (Python):', epsilon_p[7, 5])
+            print()
         return epsilon_p
 
     def epsilon_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole, debug=0):
@@ -178,17 +181,14 @@ class DipoleGasProblem(object):
         epsilon = np.zeros((self.N_kx, self.N_ky, 3))
         kx = q * self.reduced_kx
         ky = q * self.reduced_ky
-        import time
-        start_time = time.time()
         epsilon[:, :, 0] = self.epsilon_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=0)
+        epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=1)
         epsilon[:, :, 2] = self.epsilon_of_p(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        print(time.time() - start_time)
         # epsilon2 = np.zeros((self.N_kx, self.N_ky, 3))
         # epsilon2[:, :, 0] = self.epsilon_of_p_slow(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
         # epsilon2[:, :, 1] = self.epsilon_of_p_slow(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=True)
         # epsilon2[:, :, 2] = self.epsilon_of_p_slow(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-
+        # import sys; sys.exit(0)
         return epsilon
 
     def h_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
@@ -245,13 +245,16 @@ class DipoleGasProblem(object):
             h_guess = self.get_h_guess()
         if epsilon_guess is None:
             epsilon_guess = self.get_epsilon_guess(q_guess)
-            print('initial epsilon_k[7,5]]', epsilon_guess[7,5,1])
+            # print('initial epsilon_k[7,5]]', epsilon_guess[7,5,1])
         h = h_guess
         epsilon = epsilon_guess
         q = q_guess
         mu = mu_guess
 
+        i = 0
+
         while True:
+
             # Construct the Hamiltonian, which has shape (N_kx, N_ky, 3, 3):
             H_k =  self.construct_H_k(epsilon, h)
 
@@ -271,13 +274,13 @@ class DipoleGasProblem(object):
             # For the moment just use relaxation parameter of 1:
             # TODO: do over relaxation to make much fast for glorious nation
             # of Kazakhstan
-            relaxation_parameter = 1
-            print('convergence:', abs(mu - new_mu)/mu)
+            relaxation_parameter = 1.9
+            print(i, 'convergence:', abs(mu - new_mu)/mu)
             q += relaxation_parameter*(new_q - q)
             mu += relaxation_parameter*(new_mu - mu)
             h += relaxation_parameter*(new_h - h)
             epsilon += relaxation_parameter*(new_epsilon - epsilon)
-
+            i += 1
 
 
 if __name__ == '__main__':
