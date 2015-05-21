@@ -39,14 +39,14 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
                         if (eigenval <= mu){
                             evec_element = U_k[N_ky*N_n*N_l*iprime + N_n*N_l*jprime + N_l*(n+1) + l];
                             // if ((debug > 0) & (i==7) & (j==5) & (iprime==22) & (jprime==33) & (n==0) & (l==0)){
-                            //      printf("epsilon_k[7,5] kprime[22,33] n=0, l=0 (CUDA):\n");
-                            //      printf("  px is: %f\n", px);
-                            //      printf("  py is: %f\n", py);
-                            //      printf("  kxprime is: %f\n", kxprime);
-                            //      printf("  kyprime is: %f\n", kyprime);
-                            //      printf("  potential terms is %f\n",potential);
-                            //      printf("  evec element is %f\n", evec_element);
-                            //      printf("  value of term is: %f\n", potential*evec_element*evec_element);
+                            //      printf("  epsilon_k[7,5] kprime[22,33] n=0, l=0 (CUDA):\n");
+                            //      printf("    px is: %f\n", px);
+                            //      printf("    py is: %f\n", py);
+                            //      printf("    kxprime is: %f\n", kxprime);
+                            //      printf("    kyprime is: %f\n", kyprime);
+                            //      printf("    potential terms is %f\n",potential);
+                            //      printf("    evec element is %f\n", evec_element);
+                            //      printf("    value of term is: %f\n", potential*evec_element*evec_element);
                             //  }
                             accumulator += potential * evec_element*evec_element;
                         }
@@ -56,7 +56,7 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
         }
         output_arr[N_ky*i + j] = accumulator;
         // if ((debug > 0) & (i==7) & (j==5)){
-        //     printf("epsilon_k[7,5] (CUDA): %f\n\n", accumulator);
+        //     printf("  epsilon_k[7,5] (CUDA): %f\n\n", accumulator);
         // }
     }
 }
@@ -108,20 +108,23 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
                         accumulator += potential_1 * evec_element_1*evec_element_2 + potential_2 * evec_element_2*evec_element_3;
 
                         if ((debug > 0) & (i==7) & (j==5) & (iprime==22) & (jprime==33) & (l==0)){
-                             printf("h_k[7,5] kprime[22,33], l=0 (CUDA):\n");
-                             printf("  px is: %f\n", px);
-                             printf("  py is: %f\n", py);
-                             printf("  kxprime is: %f\n", kxprime);
-                             printf("  kyprime is: %f\n", kyprime);
-                             printf("  potential term 1 is %f\n", potential_1);
-                             printf("  potential term 2 is %f\n", potential_2);
-                             printf("  value of term is: %f\n",
-                                    potential_1 * evec_element_1*evec_element_2 + potential_2 * evec_element_2*evec_element_3);
+                             // printf("  h_k[7,5] kprime[22,33], l=0 (CUDA):\n");
+                             // printf("    px is: %f\n", px);
+                             // printf("    py is: %f\n", py);
+                             // printf("    kxprime is: %f\n", kxprime);
+                             // printf("    kyprime is: %f\n", kyprime);
+                             // printf("    potential term 1 is %f\n", potential_1);
+                             // printf("    potential term 2 is %f\n", potential_2);
+                             // printf("    value of term is: %f\n",
+                             //        potential_1 * evec_element_1*evec_element_2 + potential_2 * evec_element_2*evec_element_3);
                          }
                     }
                 }
             }
         }
         output_arr[N_ky*i + j] = accumulator;
+        // if ((debug > 0) & (i==7) & (j==5)){
+        //     printf("  h_k[7,5] (CUDA): %f\n\n", accumulator);
+        // }
     }
 }

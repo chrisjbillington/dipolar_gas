@@ -1,9 +1,15 @@
 from __future__ import division, print_function
+
+import time
+
 import numpy as np
 
 import pycuda.autoinit
 import pycuda.driver as drv
 from pycuda.compiler import SourceModule
+
+from scipy.interpolate import interp1d
+from scipy.optimize import fsolve
 
 # Load CUDA functions:
 with open('cuda_module.cu') as f:
@@ -26,7 +32,8 @@ def V(px, py, g, theta_dipole):
     return result
 
 class DipoleGasProblem(object):
-    def __init__(self, N_kx=50, N_ky=50, reduced_kx_max=0.5, reduced_ky_max=1):
+    def __init__(self, N_kx=100, N_ky=100, reduced_kx_max=0.5, reduced_ky_max=1):
+        print('(N_kx, N_ky) is: (%d, %d)'%(N_kx, N_ky))
 
         # number of k points in x and y directions:
         self.N_kx = N_kx
@@ -56,7 +63,7 @@ class DipoleGasProblem(object):
 
         self.N_particles = 2*pi / (dkx * dky)
 
-        print(self.N_particles)
+        print('Number of particles is:', self.N_particles)
 
     def get_h_guess(self):
         # h_k has shape (N_kx, N_ky, 2), where the last dimension is for
@@ -122,8 +129,6 @@ class DipoleGasProblem(object):
 
         kx_both_bands = np.concatenate((kx_on_positive_axis, next_band_kx))
         energies_both_bands = np.concatenate((energies_along_x_axis, next_band_energies))
-        from scipy.interpolate import interp1d
-        from scipy.optimize import fsolve
         interpolator = interp1d(kx_both_bands, energies_both_bands, kind='cubic')
 
         kx_at_fermi_surface = fsolve(lambda x: interpolator(x) - mu, old_q/2)[0]
@@ -143,18 +148,18 @@ class DipoleGasProblem(object):
                 eigenvalue = E_k_n[:, :, l, np.newaxis, np.newaxis]
                 terms_over_kprime += potential_terms * np.abs(eigenvector_element)**2 * f(mu, eigenvalue)
                 if debug and n==0 and l==0:
-                    print('epsilon_k[7,5] kprime[22,33] n=0, l=0 (Python):')
-                    print('  px is:', px[7, 0])
-                    print('  py is:', py[0, 5])
-                    print('  kxprime is:', kxprime[22,0,0,0])
-                    print('  kyprime is:', kyprime[0,33,0,0])
-                    print('  potential terms is', potential_terms[22, 33, 7, 5])
-                    print('  evec element is', eigenvector_element[22, 33, 0, 0])
+                    print('  epsilon_k[7,5] kprime[22,33] n=0, l=0 (Python):')
+                    print('    px is:', px[7, 0])
+                    print('    py is:', py[0, 5])
+                    print('    kxprime is:', kxprime[22,0,0,0])
+                    print('    kyprime is:', kyprime[0,33,0,0])
+                    print('    potential terms is', potential_terms[22, 33, 7, 5])
+                    print('    evec element is', eigenvector_element[22, 33, 0, 0])
                     this_term = potential_terms * np.abs(eigenvector_element)**2 * f(mu, eigenvalue)
-                    print('  value of term is:', this_term[22, 33, 7, 5])
+                    print('    value of term is:', this_term[22, 33, 7, 5])
         epsilon_p = (px**2 + py**2)/ 2 + terms_over_kprime.sum(axis=(0,1))
         if debug:
-            print('epsilon_k[7,5] (Python):', epsilon_p[7, 5])
+            print('  epsilon_k[7,5] (Python):', epsilon_p[7, 5])
             print()
         return epsilon_p
 
@@ -184,14 +189,14 @@ class DipoleGasProblem(object):
         epsilon[:, :, 0] = self.epsilon_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
         epsilon[:, :, 1] = self.epsilon_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=1)
         epsilon[:, :, 2] = self.epsilon_of_p(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+
         # epsilon2 = np.zeros((self.N_kx, self.N_ky, 3))
         # epsilon2[:, :, 0] = self.epsilon_of_p_slow(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
         # epsilon2[:, :, 1] = self.epsilon_of_p_slow(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=True)
         # epsilon2[:, :, 2] = self.epsilon_of_p_slow(kx + q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        # import sys; sys.exit(0)
         return epsilon
 
-    def h_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole):
+    def h_of_p_slow(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole, debug=False):
         kxprime = q * self.reduced_kx.reshape(self.N_kx, 1, 1, 1)
         kyprime = q * self.reduced_ky.reshape(1, self.N_ky, 1, 1)
         terms_over_kprime = np.zeros((self.N_kx, self.N_ky, self.N_kx, self.N_ky))
@@ -204,7 +209,24 @@ class DipoleGasProblem(object):
             terms_over_kprime += ((V(q, 0, g, theta_dipole) -
                                   V(px - kxprime, py - kyprime, g, theta_dipole))
                                   * eigenvector_elements[:, :, 1] * eigenvector_elements[:, :, 2] * f(mu, eigenvalue))
+            if debug and l==0:
+                potential_term_1 = (V(q, 0, g, theta_dipole) - V(px - kxprime + q, py - kyprime, g, theta_dipole))
+                potential_term_2 = (V(q, 0, g, theta_dipole) - V(px - kxprime, py - kyprime, g, theta_dipole))
+                print('  h_k[7,5] kprime[22,33], l=0 (Python):')
+                print('    px is:', px[7, 0])
+                print('    py is:', py[0, 5])
+                print('    kxprime is:', kxprime[22,0,0,0])
+                print('    kyprime is:', kyprime[0,33,0,0])
+                print('    potential term 1 is:', potential_term_1[22, 33, 7, 5])
+                print('    potential term 2 is:', potential_term_2[22, 33, 7, 5])
+                first_term = potential_term_1 * eigenvector_elements[:, :, 0] * eigenvector_elements[:, :, 1] * f(mu, eigenvalue)
+                second_term = potential_term_2 * eigenvector_elements[:, :, 1] * eigenvector_elements[:, :, 2] * f(mu, eigenvalue)
+                this_term = first_term + second_term
+                print('  value of term is:', this_term[22, 33, 7, 5])
         h_p = terms_over_kprime.sum(axis=(0,1))
+        if debug:
+            print('  h_k[7,5] (Python):', h_p[7, 5])
+            print()
         return h_p
 
     def h_of_p(self, px, py, E_k_n, U_k, mu, q, g, theta_dipole, debug=0):
@@ -229,12 +251,17 @@ class DipoleGasProblem(object):
         kx = q * self.reduced_kx
         ky = q * self.reduced_ky
         h[:, :, 0] = self.h_of_p(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
-        h[:, :, 1] = self.h_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=0)
+        h[:, :, 1] = self.h_of_p(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=1)
+
+        # h2 = np.zeros((self.N_kx, self.N_ky, 3))
+        # h2[:, :, 0] = self.h_of_p_slow(kx - q, ky, E_k_n, U_k, mu, q, g, theta_dipole)
+        # h2[:, :, 1] = self.h_of_p_slow(kx, ky, E_k_n, U_k, mu, q, g, theta_dipole, debug=True)
+
         return h
 
     def find_eigenvalues(self, g, theta_dipole,
                          h_guess=None, epsilon_guess=None, q_guess=None, mu_guess=None,
-                         relaxation_parameter=1.7):
+                         relaxation_parameter=1.7, threshold=1e-13):
         from numpy.linalg import eigh
         if q_guess is None or mu_guess is None:
             q_guess, mu_guess = self.get_q_and_mu_guess()
@@ -245,14 +272,25 @@ class DipoleGasProblem(object):
             h_guess = self.get_h_guess()
         if epsilon_guess is None:
             epsilon_guess = self.get_epsilon_guess(q_guess)
-            # print('initial epsilon_k[7,5]]', epsilon_guess[7,5,1])
         h = h_guess
         epsilon = epsilon_guess
         q = q_guess
         mu = mu_guess
 
+        # import cPickle as pickle
+        # with open('cache.pickle') as f:
+        #     (q, mu, h, epsilon) = pickle.load(f)
+
+        print('g is:', g)
+        print('theta is:', theta_dipole)
+        print('        =', theta_dipole/pi, 'pi')
+        print("initial mu is:", mu)
+        print("initial q is:", q)
+
         i = 0
 
+        start_time = time.time()
+        time_of_last_print = time.time() - 10
         while True:
 
             # Construct the Hamiltonian, which has shape (N_kx, N_ky, 3, 3):
@@ -266,26 +304,41 @@ class DipoleGasProblem(object):
 
             # Compute new guesses of q, h and epsilon:
             new_q, new_mu = self.compute_q_and_mu(E_k_n, q)
-            print("mu", new_mu)
-            print("q", new_q)
             new_epsilon = self.compute_epsilon(E_k_n, U_k, new_mu, new_q, g, theta_dipole)
             new_h = self.compute_h(E_k_n, U_k, new_mu, new_q, g, theta_dipole)
 
             # For the moment just use relaxation parameter of 1:
             # TODO: do over relaxation to make much fast for glorious nation
             # of Kazakhstan
-            relaxation_parameter = 1.9
-            print(i, 'convergence:', abs(mu - new_mu)/mu)
+            relaxation_parameter = 1.80
+            convergence = abs((mu - new_mu)/mu)
             q += relaxation_parameter*(new_q - q)
             mu += relaxation_parameter*(new_mu - mu)
             h += relaxation_parameter*(new_h - h)
             epsilon += relaxation_parameter*(new_epsilon - epsilon)
             i += 1
 
+            now = time.time()
+            if (now - time_of_last_print > 1) or (convergence < threshold):
+                print('\nloop iteration:', i+1)
+                print('  time per step:', round(1000*(now - start_time)/i, 2), 'ms')
+                print('  convergence:', convergence)
+                print("  mu", mu)
+                print("  q", q)
+                time_of_last_print = now
+
+                if convergence < threshold:
+                    print('time taken:', time.time() - start_time)
+                    # import cPickle as pickle
+                    # with open('cache.pickle','w') as f:
+                    #     pickle.dump((q, mu, h, epsilon), f)
+                    break
 
 if __name__ == '__main__':
+
+    # import lineprofiler
+    # lineprofiler.setup(outfile='lineprofiler')
     problem = DipoleGasProblem()
     problem.find_eigenvalues(-20, 0.1*pi)
-
 
 
