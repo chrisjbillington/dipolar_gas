@@ -5,7 +5,7 @@
 __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
                                  double *kxprime_arr, double *kyprime_arr,
                                  double *E_k_n, double *U_k,
-                                 double mu, double q, double g, double theta_dipole,
+                                 double mu, double q, double g, double theta,
                                  int N_kx, int N_ky, int debug)
 {
     const int i = threadIdx.x + blockDim.x*blockIdx.x;
@@ -23,7 +23,7 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
     double evec_element, eigenval;
     double accumulator = (px*px + py*py) / 2.0;
 
-    double pot_trig_terms = pow(cos(theta_dipole), 2) - pow(sin(theta_dipole), 2);
+    double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2);
 
     if ((i < N_kx) & (j < N_ky)){
         for (iprime=0; iprime<N_kx; iprime++){
@@ -64,7 +64,7 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
 __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
                                  double *kxprime_arr, double *kyprime_arr,
                                  double *E_k_n, double *U_k,
-                                 double mu, double q, double g, double theta_dipole,
+                                 double mu, double q, double g, double theta,
                                  int N_kx, int N_ky, int debug)
 {
     const int i = threadIdx.x + blockDim.x*blockIdx.x;
@@ -82,7 +82,7 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
     double evec_element_1, evec_element_2, evec_element_3, eigenval;
     double accumulator = 0;
 
-    double pot_trig_terms = pow(cos(theta_dipole), 2) - pow(sin(theta_dipole), 2);
+    double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2);
     double V_of_q = g*sqrt(q*q) * pot_trig_terms; // V(px=q, py=0)
 
     if ((i < N_kx) & (j < N_ky)){

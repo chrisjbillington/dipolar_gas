@@ -2,6 +2,22 @@
 
 from __future__ import division, print_function
 
+import argparse
+
+parser = argparse.ArgumentParser(description='Determine the phase of a 2D dipolar Fermi gas at zero temperature.')
+parser.add_argument('--h5file', type=str, help='the output HDF5 file')
+parser.add_argument('--zlockserver', type=str,
+                   help='hostname:port of a zlock server, so that multiple ' +
+                        'processes running this script can ensure they don\'t access the same ' +
+                        'HDF5 file at the same time. If not set, file locking will not be used and ' +
+                        'multiple processes using the same file run the risk of corrupting it.')
+parser.add_argument('g',  type=float, default=-20,
+                   help='the strength of the dipolar interaction')
+parser.add_argument('theta', type=float,
+                   help='the angle of the dipoles')
+
+args = parser.parse_args()
+
 import time
 
 import numpy as np
@@ -14,8 +30,6 @@ from numpy.linalg import eigh
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve
 
-import argparse
-
 pi = np.pi
 
 # Load CUDA functions:
@@ -23,7 +37,6 @@ with open('cuda_module.cu') as f:
     cuda_module = SourceModule(f.read())
 epsilon_of_p_GPU = cuda_module.get_function("epsilon_of_p_GPU")
 h_of_p_GPU = cuda_module.get_function("h_of_p_GPU")
-
 
 def get_initial_guess(g, theta):
     q_guess = 2 * np.sqrt(2)
@@ -214,20 +227,6 @@ if __name__ == '__main__':
     # Range of kx and ky in units of q:
     reduced_kx_max=0.5
     reduced_ky_max=1
-
-    parser = argparse.ArgumentParser(description='Determine the phase of a 2D dipolar Fermi gas at zero temperature.')
-    parser.add_argument('--h5file', type=str, help='the output HDF5 file')
-    parser.add_argument('--zlockserver', type=str,
-                       help='hostname:port of a zlock server, so that multiple ' +
-                            'processes running this script can ensure they don\'t access the same ' +
-                            'HDF5 file at the same time. If not set, file locking will not be used and ' +
-                            'multiple processes using the same file run the risk of corrupting it.')
-    parser.add_argument('g',  type=float, default=-20,
-                       help='the strength of the dipolar interaction')
-    parser.add_argument('theta', type=float,
-                       help='the angle of the dipoles')
-
-    args = parser.parse_args()
 
     g = args.g
     theta = args.theta
