@@ -18,6 +18,7 @@ parser.add_argument('theta', type=float,
 
 args = parser.parse_args()
 
+import os
 import time
 
 import numpy as np
@@ -33,7 +34,8 @@ from scipy.optimize import fsolve
 pi = np.pi
 
 # Load CUDA functions:
-with open('cuda_module.cu') as f:
+this_directory = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(this_directory, 'cuda_module.cu')) as f:
     cuda_module = SourceModule(f.read())
 epsilon_of_p_GPU = cuda_module.get_function("epsilon_of_p_GPU")
 h_of_p_GPU = cuda_module.get_function("h_of_p_GPU")
@@ -51,9 +53,9 @@ def get_initial_guess(g, theta):
     epsilon_guess = np.zeros((N_kx, N_ky, 3))
     kx = q_guess * reduced_kx
     ky = q_guess * reduced_ky
-    epsilon_guess[:, :, 0] = 1/2 * ((kx - q_guess)**2 + ky**2)
-    epsilon_guess[:, :, 1] = 1/2 * (kx**2 + ky**2)
-    epsilon_guess[:, :, 2] = 1/2 * ((kx + q_guess)**2 + ky**2)
+    epsilon_guess[:, :, 0] = ((kx - q_guess)**2 + ky**2)
+    epsilon_guess[:, :, 1] = (kx**2 + ky**2)
+    epsilon_guess[:, :, 2] = ((kx + q_guess)**2 + ky**2)
     return q_guess, mu_guess, h_guess, epsilon_guess
 
 
@@ -73,35 +75,45 @@ def construct_H_k(epsilon, h):
     return H_k
 
 
-def compute_q_and_mu(E_k_n, old_q):
+def compute_q_and_mu(E_k_n, old_q, N_states_under_fermi_surface):
     sorted_energy_eigenvalues = np.sort(E_k_n.flatten())
-    mu = sorted_energy_eigenvalues[int(round(N_particles))]
+    mu = sorted_energy_eigenvalues[int(round(N_states_under_fermi_surface))]
 
     def plot_fermi_surface():
         import pylab as pl
-        threshold = 0.1
+        threshold = 0.1*old_q
         image = np.zeros((N_kx, N_ky, 3))
         image[np.abs(mu - E_k_n) < threshold] = 1
         image = image.sum(axis=-1)
         image[image > 0] = 1
-        pl.imshow(image.transpose(), extent=[-0.5*old_q, 0.5*old_q, -old_q, old_q], origin='lower')
+        pl.imshow(image.transpose(), extent=[-0.5*old_q, 0.5*old_q, -old_q, old_q], origin='lower', cmap='gray')
         pl.show()
 
-    # plot_fermi_surface()
 
     y_origin_index = np.where(reduced_kx==0)[0][0]
-    energies_along_x_axis = np.sort(E_k_n[N_kx/2:, y_origin_index])[:, 1]
-    next_band_energies = np.sort(E_k_n[N_kx/2:, y_origin_index])[:, 0]
-    kx_on_positive_axis = old_q*reduced_kx[N_kx/2:, 0]
-    next_band_kx = old_q*(1-reduced_kx[N_kx/2:, 0])
+    energies_along_x_axis = np.sort(E_k_n[N_kx/2:, y_origin_index], axis=0)
+    band_0_energies = energies_along_x_axis[:, 0]
+    band_1_energies = energies_along_x_axis[:, 1]
+    kx_band_0 = old_q*reduced_kx[N_kx/2:, 0]
+    kx_band_1 = old_q/2 + kx_band_0
 
-    kx_both_bands = np.concatenate((kx_on_positive_axis, next_band_kx))
-    energies_both_bands = np.concatenate((energies_along_x_axis, next_band_energies))
+    kx_both_bands = np.concatenate((kx_band_0, kx_band_1))
+    energies_both_bands = np.concatenate((band_0_energies, band_1_energies))
     interpolator = interp1d(kx_both_bands, energies_both_bands, kind='cubic')
 
     kx_at_fermi_surface = fsolve(lambda x: interpolator(x) - mu, old_q/2)[0]
 
+
+
     k_F = kx_at_fermi_surface
+
+    import pylab as pl
+    pl.plot(kx_both_bands, energies_both_bands)
+    pl.figure()
+    plot_fermi_surface()
+    import IPython
+    IPython.embed()
+
     q = 2*k_F
     return q, mu
 
@@ -163,10 +175,12 @@ def compute_h( E_k_n, U_k, mu, q, g, theta):
     return h
 
 
-def iterate(g, theta, q, mu, h, epsilon):
+def iterate(g, theta, q, mu, h, epsilon, N_states_under_fermi_surface):
+
+    global i
 
     print('(N_kx, N_ky):'.rjust(15),'(%d, %d)'%(N_kx, N_ky))
-    print( 'N_particles:'.rjust(15), N_particles)
+    print(    'N_states:'.rjust(15), N_states_under_fermi_surface)
     print(           'g:'.rjust(15), g)
     print(       'theta:'.rjust(15), theta)
     print(            '='.rjust(15), theta/pi, 'pi')
@@ -188,8 +202,14 @@ def iterate(g, theta, q, mu, h, epsilon):
         # diagonalise each Hamiltonian.
         E_k_n, U_k = eigh(H_k)
 
+        dkx = (reduced_kx[1, 0] - reduced_kx[0, 0]) * q
+        dky = (reduced_ky[0, 1] - reduced_ky[0, 0]) * q
+        N_states_under_fermi_surface = 2*pi / (dkx * dky)
+
+        density = N_states_under_fermi_surface*dkx*dky/(4*pi**2)
+
         # Compute new guesses of q, h and epsilon:
-        new_q, new_mu = compute_q_and_mu(E_k_n, q)
+        new_q, new_mu = compute_q_and_mu(E_k_n, q, N_states_under_fermi_surface)
         new_epsilon = compute_epsilon(E_k_n, U_k, new_mu, new_q, g, theta)
         new_h = compute_h(E_k_n, U_k, new_mu, new_q, g, theta)
 
@@ -200,6 +220,7 @@ def iterate(g, theta, q, mu, h, epsilon):
         epsilon += RELAXATION_PARAMETER*(new_epsilon - epsilon)
         i += 1
 
+        mus.append(mu)
         now = time.time()
         if (now - time_of_last_print > PRINT_INTERVAL) or (convergence < CONVERGENCE_THRESHOLD):
             print('\n  loop iteration:', i)
@@ -207,22 +228,29 @@ def iterate(g, theta, q, mu, h, epsilon):
             print('    convergence:', convergence)
             print("    mu", mu)
             print("    q", q)
+            print('    density', density)
             time_of_last_print = now
+
+            # plot(mus)
+            # show()
 
             if convergence < CONVERGENCE_THRESHOLD:
                 print('time taken:', time.time() - start_time)
                 return q, mu, h, epsilon, E_k_n, U_k
 
+mus = []
 
 if __name__ == '__main__':
 
+    from pylab import *
+
     CONVERGENCE_THRESHOLD = 1e-13
-    RELAXATION_PARAMETER = 1.8
+    RELAXATION_PARAMETER = 1.0
     PRINT_INTERVAL = 5 # seconds
 
     # Number of k points in x and y directions:
-    N_kx=50
-    N_ky=50
+    N_kx=100
+    N_ky=100
 
     # Range of kx and ky in units of q:
     reduced_kx_max=0.5
@@ -262,9 +290,11 @@ if __name__ == '__main__':
     dkx_initial = (reduced_kx[1, 0] - reduced_kx[0, 0]) * initial_q
     dky_initial = (reduced_ky[0, 1] - reduced_ky[0, 0]) * initial_q
 
-    N_particles = 2*pi / (dkx_initial * dky_initial)
+    initial_N_states_under_fermi_surface = 2*pi / (dkx_initial * dky_initial)
 
     # import lineprofiler
     # lineprofiler.setup(outfile='lineprofiler')
-    q, mu, h, epsilon, E_k_n, U_k = iterate(g, theta, initial_q, initial_mu, initial_h, initial_epsilon)
+    q, mu, h, epsilon, E_k_n, U_k = iterate(g, theta, initial_q, initial_mu, initial_h, initial_epsilon, initial_N_states_under_fermi_surface)
 
+    import IPython
+    IPython.embed()

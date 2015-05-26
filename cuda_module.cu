@@ -21,9 +21,13 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
     double kxprime, kyprime;
     double px_pot, py_pot, potential;
     double evec_element, eigenval;
-    double accumulator = (px*px + py*py) / 2.0;
+    double accumulator = 0;
 
     double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2);
+
+    const double dpx = px_arr[1] - px_arr[0];
+    const double dpy = py_arr[1] - py_arr[0];
+    const double prefactor = dpx*dpy/(4*M_PI*M_PI);
 
     if ((i < N_kx) & (j < N_ky)){
         for (iprime=0; iprime<N_kx; iprime++){
@@ -54,6 +58,13 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
                 }
             }
         }
+
+        // Multiple the sum by the appropriate prefactor:
+        accumulator *= prefactor;
+
+        // Add the kinetic term:
+        accumulator += (px*px + py*py);
+
         output_arr[N_ky*i + j] = accumulator;
         // if ((debug > 0) & (i==7) & (j==5)){
         //     printf("  epsilon_k[7,5] (CUDA): %f\n\n", accumulator);
@@ -84,6 +95,10 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
 
     double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2);
     double V_of_q = g*sqrt(q*q) * pot_trig_terms; // V(px=q, py=0)
+
+    const double dpx = px_arr[1] - px_arr[0];
+    const double dpy = py_arr[1] - py_arr[0];
+    const double prefactor = dpx*dpy/(4*M_PI*M_PI);
 
     if ((i < N_kx) & (j < N_ky)){
         for (iprime=0; iprime<N_kx; iprime++){
@@ -122,6 +137,9 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
                 }
             }
         }
+        // Multiple the sum by the appropriate prefactor:
+        accumulator *= prefactor;
+
         output_arr[N_ky*i + j] = accumulator;
         // if ((debug > 0) & (i==7) & (j==5)){
         //     printf("  h_k[7,5] (CUDA): %f\n\n", accumulator);
