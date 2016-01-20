@@ -23,7 +23,7 @@ __global__ void epsilon_of_p_GPU(double *output_arr, double *px_arr, double *py_
     double evec_element, eigenval;
     double accumulator = 0;
 
-    double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2);
+    double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2)*0;
 
     const double dpx = px_arr[1] - px_arr[0];
     const double dpy = py_arr[1] - py_arr[0];
@@ -93,7 +93,7 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
     double evec_element_1, evec_element_2, evec_element_3, eigenval;
     double accumulator = 0;
 
-    double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2);
+    double pot_trig_terms = pow(cos(theta), 2) - pow(sin(theta), 2)*0;
     double V_of_q = g*sqrt(q*q) * pot_trig_terms; // V(px=q, py=0)
 
     const double dpx = px_arr[1] - px_arr[0];
@@ -122,7 +122,7 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
 
                         accumulator += potential_1 * evec_element_1*evec_element_2 + potential_2 * evec_element_2*evec_element_3;
 
-                        if ((debug > 0) & (i==7) & (j==5) & (iprime==22) & (jprime==33) & (l==0)){
+                        // if ((debug > 0) & (i==7) & (j==5) & (iprime==22) & (jprime==33) & (l==0)){
                              // printf("  h_k[7,5] kprime[22,33], l=0 (CUDA):\n");
                              // printf("    px is: %f\n", px);
                              // printf("    py is: %f\n", py);
@@ -132,7 +132,7 @@ __global__ void h_of_p_GPU(double *output_arr, double *px_arr, double *py_arr,
                              // printf("    potential term 2 is %f\n", potential_2);
                              // printf("    value of term is: %f\n",
                              //        potential_1 * evec_element_1*evec_element_2 + potential_2 * evec_element_2*evec_element_3);
-                         }
+                         // }
                     }
                 }
             }

@@ -1,0 +1,13 @@
+- Fix units bugs
+- Work out how to determine in-code which phase the system is in
+- Verify correct results for sample points
+- Make interpolation faster by doing linear interpolation manually
+- Make diagonalisation faster with Cython extension
+- Make CUDA code cleaner by defining a V function, forced inline with cached global value of the trig terms
+    (possibly template the CUDA code to compile with hard-coded constants g and theta)
+- Write code to save result to h5 file and read initial guesses from h5 file
+- Write batch job submitter script that creates output folders and submits many jobs for a range of g and theta
+- Minimise k_F w.r.t energy?
+- Finite temperature?
+- 2 layer case.
+

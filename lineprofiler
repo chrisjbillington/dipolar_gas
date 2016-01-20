@@ -1,0 +1,4 @@
+[98.33 %] line 79:    from scipy.stats import linregress
+[1.30 %] line 236:    E_k_n, U_k = eigh(H_k)
+[0.34 %] line 77:    sorted_energy_eigenvalues = np.sort(E_k_n.flatten())
+[0.03 %] line 240:    N_states_under_fermi_surface = pi / (dkx * dky)
